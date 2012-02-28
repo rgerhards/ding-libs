@@ -21,7 +21,7 @@
     along with Collection Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#define _GNU_SOURCE
+#include "config.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
