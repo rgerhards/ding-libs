@@ -67,6 +67,10 @@
 #define TEXT_COLLECTION "SET"
 /** @brief Length of the \ref TEXT_COLLECTION literal. */
 #define TEXT_COLLEN 3
+/** @brief Literal used in the JSON EVENT serialization. */
+#define TEXT_EVENT "Event"
+/** @brief Length of the \ref TEXT_EVENT literal. */
+#define TEXT_EVENTLEN 5
 
 /**
  * @brief The data will be allocated in BLOCK_SIZE
@@ -224,6 +228,22 @@ int col_print_collection(struct collection_item *handle);
 int col_print_collection2(struct collection_item *handle);
 
 /**
+ * @brief Convert collection data to JSON.
+ *
+ * Prints collection data.
+ * Uses traverse function to iterate through
+ * the collection.
+ *
+ * @param[in]  handle            Collection to convert to JSON.
+ * @param[out] storage           Pointer where the allocated buffer will be put.
+ *
+ * @return 0      - Success.
+ * @return ENOMEM - No memory.
+ */
+int col_json_collection(struct collection_item *handle,
+                        char **storage);
+
+/**
  * @brief Find and print one property.
  *
  * Prints item data.
@@ -264,9 +284,5 @@ char **col_collection_to_list(struct collection_item *handle,
  * @param[in] str_list          List to free.
  */
 void col_free_property_list(char **str_list);
-
-/**
- * @}
- */
 
 #endif

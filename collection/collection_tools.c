@@ -557,6 +557,219 @@ int col_print_collection(struct collection_item *handle)
     return error;
 }
 
+/* Use JSON formal for serialization */
+int col_json(const char *property_in,
+             int property_len_in,
+             int type,
+             void *data_in,
+             int length_in,
+             void *custom_data,
+             int *dummy)
+{
+    int len;
+    struct col_serial_data *buf_data;
+    const char *property;
+    const void *data;
+    int  property_len;
+    int length;
+    int error = EOK;
+    int i;
+
+    TRACE_FLOW_STRING("col_json","Entry point");
+
+    *dummy = 0;
+
+    /* Check is there is buffer. If not allocate */
+    buf_data = (struct col_serial_data *)custom_data;
+    if (buf_data == NULL) {
+        TRACE_ERROR_STRING("Error.", "Storage data is not passed in!");
+        return EINVAL;
+    }
+    if (buf_data->buffer == NULL) {
+        TRACE_INFO_STRING("First time use.", "Allocating buffer.");
+        buf_data->buffer = malloc(BLOCK_SIZE);
+        if (buf_data->buffer == NULL) {
+            TRACE_ERROR_NUMBER("Error. Failed to allocate memory.", ENOMEM);
+            return ENOMEM;
+        }
+        buf_data->buffer[0] = '\0';
+        buf_data->length = 0;
+        buf_data->size = BLOCK_SIZE;
+    }
+
+    TRACE_INFO_NUMBER("Buffer len: ", buf_data->length);
+    TRACE_INFO_NUMBER("Buffer size: ", buf_data->size);
+    TRACE_INFO_STRING("Buffer: ", buf_data->buffer);
+
+    /* Check the beginning of the collection */
+    if (type == COL_TYPE_COLLECTION) {
+        TRACE_INFO_STRING("Serializing collection: ", property_in);
+        TRACE_INFO_STRING("First header. ", "");
+        error = col_put_marker(buf_data, "{", 1);
+        if (error != EOK) return error;
+        property = TEXT_EVENT;
+        property_len = TEXT_EVENTLEN;
+        data = property_in;
+        length = property_len_in + 1;
+        type = COL_TYPE_STRING;
+        buf_data->nest_level++;
+    }
+    /* Check for subcollections */
+    else if (type == COL_TYPE_COLLECTIONREF) {
+        /* Skip */
+        TRACE_FLOW_STRING("col_serialize", "skip reference return");
+        return EOK;
+    }
+    /* Check for the end of the collection */
+    else if (type == COL_TYPE_END) {
+        if ((buf_data->length > 0) &&
+            (buf_data->buffer[buf_data->length-1] == ',')) {
+            buf_data->length--;
+            buf_data->buffer[buf_data->length] = '\0';
+        }
+        if (buf_data->nest_level > 0) {
+            buf_data->nest_level--;
+            error = col_put_marker(buf_data, "}", 1);
+            if (error != EOK) return error;
+        }
+        TRACE_FLOW_STRING("col_serialize", "end collection item processed returning");
+        return EOK;
+    }
+    else {
+        property = property_in;
+        property_len = property_len_in;
+        data = data_in;
+        length = length_in;
+    }
+
+    TRACE_INFO_STRING("Property: ", property);
+    TRACE_INFO_NUMBER("Property length: ", property_len);
+
+    /* Start with property and ":" */
+    if ((error = col_put_marker(buf_data, "\"", 1)) ||
+        (error = col_put_marker(buf_data, property, property_len)) ||
+        (error = col_put_marker(buf_data, "\":", 2))) {
+        TRACE_ERROR_NUMBER("put_marker returned error: ", error);
+        return error;
+    }
+    /* Get projected length of the item */
+    len = col_get_data_len(type,length);
+    TRACE_INFO_NUMBER("Expected data length: ",len);
+    TRACE_INFO_STRING("Buffer so far: ", buf_data->buffer);
+
+    /* Make sure we have enough space */
+    if ((error = col_grow_buffer(buf_data, len))) {
+        TRACE_ERROR_NUMBER("grow_buffer returned error: ", error);
+        return error;
+    }
+
+    /* Add the value */
+    switch (type) {
+    case COL_TYPE_STRING:
+        /* Escape double quotes */
+        len = col_copy_esc(&buf_data->buffer[buf_data->length],
+                           (const char *)(data), '"');
+        break;
+
+    case COL_TYPE_BINARY:
+        buf_data->buffer[buf_data->length] = '\'';
+        for (i = 0; i < length; i++)
+            sprintf(&buf_data->buffer[buf_data->length + i *2] + 1,
+                    "%02X", (unsigned int)(((const unsigned char *)(data))[i]));
+        len = length * 2 + 1;
+        buf_data->buffer[buf_data->length + len] = '\'';
+        len++;
+        break;
+
+    case COL_TYPE_INTEGER:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%d", *((const int32_t *)(data)));
+        break;
+
+    case COL_TYPE_UNSIGNED:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%u", *((const uint32_t *)(data)));
+        break;
+
+    case COL_TYPE_LONG:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%lld",
+                      (long long int)(*((const int64_t *)(data))));
+        break;
+
+    case COL_TYPE_ULONG:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%llu",
+                      (long long unsigned)(*((const uint64_t *)(data))));
+        break;
+
+    case COL_TYPE_DOUBLE:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%.4f", *((const double *)(data)));
+        break;
+
+    case COL_TYPE_BOOL:
+        len = sprintf(&buf_data->buffer[buf_data->length],
+                      "%s", (*((const unsigned char *)(data))) ? "true" : "false");
+        break;
+
+    default:
+        buf_data->buffer[buf_data->length] = '\0';
+        len = 0;
+        break;
+    }
+
+    /* Adjust length */
+    buf_data->length += len;
+    buf_data->buffer[buf_data->length] = '\0';
+
+    /* Always put a comma at the end */
+    error = col_put_marker(buf_data, ",", 1);
+    if (error != EOK) {
+        TRACE_ERROR_NUMBER("put_marker returned error: ", error);
+        return error;
+    }
+
+    TRACE_INFO_STRING("Data: ", buf_data->buffer);
+    TRACE_FLOW_STRING("col_json", "Exit point");
+    return EOK;
+
+}
+
+/* Create a buffer containg JSON serialization */
+int col_json_collection(struct collection_item *handle, char **storage)
+{
+    struct col_serial_data buf_data;
+    int error = EOK;
+
+    TRACE_FLOW_STRING("col_json_collection", "Entry");
+
+    if (storage == NULL) {
+        TRACE_ERROR_STRING("Error.", "Storage data is not passed in!");
+        return EINVAL;
+    }
+
+    *storage = NULL;
+
+    buf_data.buffer = NULL;
+    buf_data.length = 0;
+    buf_data.size = 0;
+    buf_data.nest_level = 0;
+
+    /* Traverse collection */
+    error = col_traverse_collection(handle,
+                                    COL_TRAVERSE_DEFAULT | COL_TRAVERSE_END ,
+                                    col_json, (void *)(&buf_data));
+    if (error)
+        TRACE_ERROR_NUMBER("Error traversing collection ", error);
+    else
+        *storage = buf_data.buffer;
+
+    TRACE_FLOW_NUMBER("col_json_collection returning", error);
+    return error;
+}
+
+
 /* Print the collection using iterator */
 int col_print_collection2(struct collection_item *handle)
 {
